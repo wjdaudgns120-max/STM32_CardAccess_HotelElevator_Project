@@ -17,3 +17,6 @@ __pycache__/
 
 # VS Code
 .vscode/
+
+# Eclipse / CubeIDE workspace settings
+.settings/
