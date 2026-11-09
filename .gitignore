@@ -1,0 +1,16 @@
+# STM32CubeIDE build outputs
+Debug/
+Release/
+*.elf
+*.map
+*.list
+*.o
+*.d
+*.su
+*.cyclo
+.metadata/
+*.launch
+
+# Python
+__pycache__/
+*.pyc
