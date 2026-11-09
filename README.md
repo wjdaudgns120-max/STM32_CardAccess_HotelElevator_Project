@@ -5,10 +5,8 @@ STM32 Nucleo-F411RE로 만든 **카드 권한형 3층 엘리베이터**입니다
 
 > Team 15 · 정명훈, 이기광 (2026.11)
 >
-> 📑 발표 자료: [docs/STM32_Elevator_Project.pdf](docs/STM32_Elevator_Project.pdf)
+> 📑 발표 자료: [docs/STM32_Elevator_Project.pdf](docs/STM32_Elevator_Project.pdf) · 개발계획서: [docs/elevator_dev_plan_v1.6.md](docs/elevator_dev_plan_v1.6.md)
 > 🎬 동작 영상: [docs/video/demo_video.mp4](docs/video/demo_video.mp4) · GUI 영상: [docs/video/gui_video.mp4](docs/video/gui_video.mp4)
->
-> 소스 코드는 정리 후 추가될 예정입니다.
 
 ![Demo](docs/images/demo_preview.gif)
 
@@ -49,7 +47,9 @@ STM32 Nucleo-F411RE로 만든 **카드 권한형 3층 엘리베이터**입니다
 ![GUI](docs/images/gui.png)
 
 가상 엘리베이터와 문 애니메이션, 층별 카드 리더, 내부 조작반, 카드 선택, 펌웨어 상태(현재 층 · 방향 · 상태 · 요청 비트)를 보여 줍니다.
-**랜덤 시나리오** 기능으로 여러 승객의 태그를 자동으로 발생시키고, 정지 층이 예상과 같은지 로그로 검증합니다.
+- **검증 모델** (`backend/model.py`): 펌웨어의 `scheduler.c` · `card_auth.c` · `master_mode.c`와 같은 운행 규칙을 Python으로 따로 돌려, STM32가 보낸 `ARRIVED` / `STATUS` / `DONE`이 예상과 다르면 로그에 알립니다.
+- **랜덤 시나리오** (`backend/scenario.py`): 손님 · 직원 여러 명의 태그와 권한 없는 카드, 문 닫히는 중 같은 층 태그(REOPEN) 같은 방해 입력을 이동 중 · 문 열림 · 문 닫히는 중 타이밍에 흩어 넣어, 하드웨어로 만들기 어려운 상황을 시험합니다.
+- **MOCK 모드**: 포트에서 `MOCK`을 고르면 보드 없이 가짜 펌웨어(`mock_fw.py`)로 GUI를 확인할 수 있습니다.
 
 ## 소프트웨어 구조
 
@@ -61,6 +61,37 @@ STM32 Nucleo-F411RE로 만든 **카드 권한형 3층 엘리베이터**입니다
 | Service | `scheduler`, `card_auth`, `master_mode`, `door`, `Display`, `protocol`, `sound` |
 | Driver | Button, StepMotor, Photo Interrupter, LCD, Buzzer, UART, Queue |
 | HAL | GPIO, I2C1, USART2, TIM1(PWM) |
+
+```
+Core/Src
+├── main.c
+├── ap/
+│   ├── ap_main.c                # super loop, run_fsm(2-process FSM), motor_task
+│   └── service/
+│       ├── card_auth/           # 카드 종류 × 리더 → 호출 / 마스터 모드
+│       ├── scheduler/           # 8bit 요청 레지스터, SCAN (should_stop / serve / next_dir)
+│       ├── master_mode/         # 직원 마스터 모드 (5초, 층 버튼 1회)
+│       ├── door/                # 문 열림 5초 카운트
+│       ├── protocol/            # 8바이트 UART 프레임 송수신, 수신 큐(8칸)
+│       ├── Display/             # LCD 화면 (floor, Closing in n sec)
+│       ├── sound/               # 논블로킹 버튼음 (G6 → C7)
+│       └── btn_event/           # 버튼 이벤트 큐(16칸)
+├── common/queue/                # 링 버퍼 큐
+└── driver/
+    ├── stepmotor/  photo_interrupter/  button/
+    └── lcd/  buzzer/  uart/  fnd/
+
+GUI/
+├── main.py                      # 실행 파일 (pyserial 자동 설치)
+├── frontend/app.py              # tkinter 화면: 가상 엘리베이터, 조작반, 상태, 로그
+└── backend/
+    ├── controller.py            # 화면과 통신 사이 창구
+    ├── link.py                  # SerialLink(보드) / MockLink(보드 없이)
+    ├── codec.py                 # 8바이트 프레임 인코딩 · 디코딩
+    ├── model.py                 # 펌웨어와 같은 운행 규칙(검증 모델), STM32 응답과 비교
+    ├── mock_fw.py               # 보드 없이 시험하는 가짜 펌웨어
+    └── scenario.py              # 랜덤 시나리오 생성
+```
 
 ### Main Loop & Timing
 
@@ -187,6 +218,20 @@ CHK = (LEN + CMD + P0 + P1 + P2 + P3) & 0xFF
 - 보드 기본 설정에서 쓸 수 없는 핀이 있으므로, 핀 배정 전에 보드 매뉴얼 확인 필요
 - 초기 계획서에서 기능과 상태(FSM), 핀 배치를 먼저 정하고 그대로 개발에 적용하니 역할 분담과 통합이 수월했음
 
+## 실행 방법
+
+**펌웨어**
+1. STM32CubeIDE에서 `File → Import → Existing Projects into Workspace`로 이 폴더를 엽니다.
+2. `test_elevator.ioc`로 핀 설정을 확인할 수 있습니다.
+3. Build 후 Nucleo-F411RE에 Run 합니다.
+
+**GUI** (Python 3, tkinter)
+```bash
+cd GUI
+python main.py        # pyserial이 없으면 처음 실행할 때 자동 설치
+```
+포트에서 보드의 ST-LINK 가상 COM 포트를 선택하고 Connect 합니다. 보드가 없으면 `MOCK`을 선택하세요.
+
 ## 개발 환경
 
-STM32CubeIDE, STM32 HAL (STM32F4xx), C, Python (PC GUI)
+STM32CubeIDE, STM32 HAL (STM32F4xx), C, Python (tkinter, pyserial)
